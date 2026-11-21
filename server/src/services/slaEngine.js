@@ -78,7 +78,7 @@ export function isNonWorkingDay(date, holidaySet = new Set()) {
   const ist = toIST(date);
   const dayOfWeek = ist.getUTCDay(); // 0 is Sunday, 6 is Saturday
   if (dayOfWeek === 0 || dayOfWeek === 6) return true;
-  
+
   const dateStr = formatISTDate(date);
   return holidaySet.has(dateStr);
 }
@@ -86,13 +86,13 @@ export function isNonWorkingDay(date, holidaySet = new Set()) {
 /**
  * Advance to 09:30:00 IST on the next working day strictly after date's calendar day.
  */
-function advanceToNextWorkingDayStart(date, holidaySet) {
+export function advanceToNextWorkingDayStart(date, holidaySet = new Set()) {
   let probe = toIST(date);
   while (true) {
     // Add 1 calendar day to IST
     const nextDayUtc = Date.UTC(probe.getUTCFullYear(), probe.getUTCMonth(), probe.getUTCDate() + 1, 0, 0, 0);
     probe = new Date(nextDayUtc); // shifted IST representation of midnight of next day
-    
+
     // Check if weekend or holiday
     const dayOfWeek = probe.getUTCDay();
     const dateStr = `${probe.getUTCFullYear()}-${String(probe.getUTCMonth() + 1).padStart(2, '0')}-${String(probe.getUTCDate()).padStart(2, '0')}`;
@@ -105,8 +105,8 @@ function advanceToNextWorkingDayStart(date, holidaySet) {
 /**
  * Snaps a date forward to 09:30:00 IST of the next working day if outside working hours,
  * weekend, or holiday.
- * @param {Date} date 
- * @param {Set<string>} holidaySet 
+ * @param {Date} date
+ * @param {Set<string>} holidaySet
  * @returns {Date}
  */
 export function snapToNextWorkingWindow(date, holidaySet = new Set()) {
@@ -186,7 +186,7 @@ export function calculateWorkingMinutes(start, end, holidaySet = new Set()) {
     const curDateStr = formatISTDate(current);
     const istCurrent = toIST(current);
     const curMin = istCurrent.getUTCHours() * 60 + istCurrent.getUTCMinutes() + istCurrent.getUTCSeconds() / 60;
-    
+
     const dayEnd = makeISTDate(curDateStr, WORK_END_MIN);
 
     if (dEnd <= dayEnd) {
@@ -201,6 +201,39 @@ export function calculateWorkingMinutes(start, end, holidaySet = new Set()) {
   }
 
   return Math.round(totalMinutes);
+}
+
+/**
+ * Calculates total active working seconds elapsed between start and end.
+ * @param {Date} start
+ * @param {Date} end
+ * @param {Set<string>} holidaySet
+ * @returns {number}
+ */
+export function calculateWorkingSeconds(start, end, holidaySet = new Set()) {
+  const dStart = new Date(start);
+  const dEnd = new Date(end);
+  if (dEnd <= dStart) return 0;
+
+  let current = snapToNextWorkingWindow(dStart, holidaySet);
+  if (current >= dEnd) return 0;
+
+  let totalSeconds = 0;
+
+  while (current < dEnd) {
+    const curDateStr = formatISTDate(current);
+    const dayEnd = makeISTDate(curDateStr, WORK_END_MIN);
+
+    if (dEnd <= dayEnd) {
+      totalSeconds += Math.max(0, (dEnd.getTime() - current.getTime()) / 1000);
+      break;
+    } else {
+      totalSeconds += Math.max(0, (dayEnd.getTime() - current.getTime()) / 1000);
+      current = advanceToNextWorkingDayStart(current, holidaySet);
+    }
+  }
+
+  return Math.round(totalSeconds);
 }
 
 /**
@@ -255,7 +288,7 @@ export function recalculateSLAOnPriorityChange(ticket, newPriority, now = new Da
   const effectiveStart = snapToNextWorkingWindow(ticket.created_at, holidaySet);
   const totalPausedMinutes = ticket.total_paused_working_minutes || 0;
   const isCurrentlyPaused = ticket.status === 'pending_customer';
-  
+
   const referenceTime = isCurrentlyPaused && ticket.sla_paused_at ? new Date(ticket.sla_paused_at) : new Date(now);
 
   // 1. FIRST RESPONSE SLA
@@ -285,7 +318,7 @@ export function recalculateSLAOnPriorityChange(ticket, newPriority, now = new Da
       targetDayStr = formatISTDate(effectiveDay);
     }
     resolutionDueAt = makeISTDate(targetDayStr, WORK_END_MIN);
-    
+
     if (!isCurrentlyPaused && resolutionDueAt <= now) {
       resolutionBreached = true;
     }
@@ -352,7 +385,7 @@ export function checkReopenEligibility(ticket, now = new Date()) {
   if (ticket.status !== 'resolved') {
     return { canReopen: false, reason: "Only resolved tickets can be reopened." };
   }
-  
+
   if (!ticket.resolved_at) {
     return { canReopen: false, reason: "Ticket has no resolution timestamp." };
   }
@@ -361,9 +394,9 @@ export function checkReopenEligibility(ticket, now = new Date()) {
   const deadline = new Date(resolvedAt.getTime() + REOPEN_WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
   if (now > deadline) {
-    return { 
-      canReopen: false, 
-      reason: "The 7-calendar-day reopening window has expired. Please create a new ticket." 
+    return {
+      canReopen: false,
+      reason: "The 7-calendar-day reopening window has expired. Please create a new ticket."
     };
   }
 
@@ -468,6 +501,8 @@ export function getTicketSLAInfo(ticket, now = new Date(), holidaySet = new Set(
       remaining_working_minutes: resolveRemainingWorkingMinutes
     },
     is_paused: isPendingCustomer,
-    is_overdue: isOverdue
+    is_overdue: isOverdue,
+    server_time: now.toISOString(),
+    holidays: Array.from(holidaySet || [])
   };
 }
