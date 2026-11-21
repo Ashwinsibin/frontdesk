@@ -1,4 +1,9 @@
-const API_BASE = '/api';
+// Robust API Base URL resolution:
+// 1. Reads import.meta.env.VITE_API_URL if configured in deployment (e.g. Render).
+// 2. Falls back to 'http://localhost:5000/api' for local development.
+// 3. Normalizes trailing slashes so full absolute paths are always generated.
+const RAW_API_BASE = (import.meta.env.VITE_API_URL && import.meta.env.VITE_API_URL.trim()) || 'http://localhost:5000/api';
+export const API_BASE = RAW_API_BASE.replace(/\/+$/, '');
 
 export function getAuthToken() {
   return localStorage.getItem('frontdesk_token');
@@ -33,7 +38,10 @@ async function request(endpoint, options = {}) {
     ...options.headers
   };
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const url = `${API_BASE}${cleanEndpoint}`;
+
+  const response = await fetch(url, {
     ...options,
     headers
   });

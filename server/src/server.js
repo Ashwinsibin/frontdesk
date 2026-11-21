@@ -20,8 +20,22 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const clientDistPath = path.join(__dirname, '../../client/dist');
 
+export function resolvePort(val, fallback = 5000) {
+  if (val !== undefined && val !== null && val !== '') {
+    const parsed = Number(val);
+    if (!Number.isNaN(parsed) && Number.isInteger(parsed) && parsed > 0 && parsed < 65536) {
+      return parsed;
+    }
+    const intParsed = parseInt(String(val).trim(), 10);
+    if (!Number.isNaN(intParsed) && Number.isInteger(intParsed) && intParsed > 0 && intParsed < 65536) {
+      return intParsed;
+    }
+  }
+  return fallback;
+}
+
 const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 5000;
+const PORT = resolvePort(process.env.PORT, 5000);
 const HOST = '0.0.0.0';
 
 // Middleware
@@ -69,8 +83,10 @@ app.use((err, req, res, next) => {
 });
 
 // Server Initialization
-export async function startServer() {
+export async function startServer(portOverride = null) {
   console.log('🚀 Starting FRONTDESK Backend Server...');
+
+  const activePort = resolvePort(portOverride || process.env.PORT, 5000);
 
   // 1. Test Database Connection & Auto-migrate
   const isDbConnected = await testConnection();
@@ -98,16 +114,16 @@ export async function startServer() {
     }
   }, 5 * 60 * 1000);
 
-  const server = app.listen(PORT, HOST, () => {
-    console.log(`✅ FRONTDESK API Server running on ${HOST}:${PORT}`);
-    console.log(`🌐 Base URL: http://localhost:${PORT}`);
+  const server = app.listen(activePort, HOST, () => {
+    console.log(`✅ FRONTDESK API Server running on ${HOST}:${activePort}`);
+    console.log(`🌐 Base URL: http://localhost:${activePort}`);
   });
 
-  return { app, server };
+  return { app, server, port: activePort };
 }
 
-// Start if executed directly
-if (process.env.NODE_ENV !== 'test') {
+// Start if executed directly (not when imported by tests)
+if (process.argv[1] && (process.argv[1] === fileURLToPath(import.meta.url) || process.argv[1].endsWith('server.js'))) {
   startServer();
 }
 
