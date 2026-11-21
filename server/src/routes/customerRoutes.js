@@ -108,7 +108,7 @@ router.get('/tickets', async (req, res) => {
   try {
     const customerId = req.user.id;
     const result = await query(`
-      SELECT id, ticket_number, title, description, status, priority, 
+      SELECT id, ticket_number, title, description, category, status, priority, 
              first_response_due_at, resolution_due_at, resolved_at, 
              reopen_deadline_at, closed_at, created_at, updated_at
       FROM tickets
@@ -146,7 +146,7 @@ router.get('/tickets/:id', async (req, res) => {
 
     // Verify ticket ownership
     const ticketRes = await query(`
-      SELECT id, ticket_number, title, description, status, priority,
+      SELECT id, ticket_number, title, description, category, status, priority,
              first_response_due_at, resolution_due_at, resolved_at,
              reopen_deadline_at, closed_at, created_at, updated_at
       FROM tickets

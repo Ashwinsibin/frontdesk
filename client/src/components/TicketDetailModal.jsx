@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
   X, Lock, Send, AlertTriangle, CheckCircle, Clock, ShieldAlert,
-  ArrowRight, MessageSquare, History, User, Check
+  ArrowRight, MessageSquare, History, User, Check, Zap, Moon
 } from 'lucide-react';
 import { api } from '../api';
 import SLACounter from './SLACounter';
@@ -22,6 +22,9 @@ export default function TicketDetailModal({ ticketId, onClose, onTicketUpdated, 
 
   // Resolving state
   const [resolving, setResolving] = useState(false);
+
+  // Working hours simulation state (allows testing live second-by-second countdown on weekends/off-hours)
+  const [simulateWorkingHours, setSimulateWorkingHours] = useState(false);
 
   const fetchDetail = async () => {
     try {
@@ -125,6 +128,9 @@ export default function TicketDetailModal({ ticketId, onClose, onTicketUpdated, 
             <span className="font-mono text-sm font-bold bg-blue-100 dark:bg-blue-950/80 text-blue-800 dark:text-blue-300 px-2.5 py-1 rounded-md border border-blue-200 dark:border-blue-900">
               {ticket.ticket_number}
             </span>
+            <span className="text-[11px] font-semibold uppercase px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+              {ticket.category || 'General'}
+            </span>
             <h2 className="text-lg font-bold text-slate-900 dark:text-white line-clamp-1">{ticket.title}</h2>
           </div>
           <div className="flex items-center gap-2">
@@ -147,35 +153,97 @@ export default function TicketDetailModal({ ticketId, onClose, onTicketUpdated, 
           </div>
         </div>
 
-        {/* SLA Status Bar */}
+        {/* SLA Status Bar & Ticket Creation Time */}
         <div className="bg-slate-100/80 dark:bg-slate-800/60 px-6 py-2.5 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-3">
-            <SLACounter ticket={ticket} horizontal />
+          <div className="flex flex-wrap items-center gap-3">
+            <SLACounter 
+              ticket={ticket} 
+              horizontal 
+              simulatedServerTime={simulateWorkingHours ? '2026-11-23T04:30:00.000Z' : undefined} 
+            />
+            <span className="text-slate-300 dark:text-slate-700 hidden sm:inline">|</span>
+            <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+              <Clock className="w-3.5 h-3.5 text-blue-500" />
+              <span>Created: <strong className="text-slate-700 dark:text-slate-300">{new Date(ticket.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })}</strong></span>
+            </div>
           </div>
 
-          {/* Priority Recalculation Selector */}
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500 dark:text-slate-400 font-medium">Priority:</span>
-            <select
-              value={selectedPriority}
-              onChange={(e) => setSelectedPriority(e.target.value)}
-              className="text-xs border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Working Hours Simulation Toggle */}
+            <button
+              type="button"
+              onClick={() => setSimulateWorkingHours(prev => !prev)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition border ${
+                simulateWorkingHours
+                  ? 'bg-amber-500 text-white border-amber-600 shadow-sm'
+                  : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'
+              }`}
+              title="Temporarily simulate active working hours (Mon 10:00 AM IST) to verify live countdown on weekends/off-hours"
             >
-              <option value="urgent">🔴 Urgent (Same-day 18:30)</option>
-              <option value="medium">🟡 Medium (3 days)</option>
-              <option value="small">🔵 Small (1 week)</option>
-            </select>
-            {selectedPriority !== ticket.priority && (
-              <button
-                onClick={handlePriorityChange}
-                disabled={changingPriority}
-                className="px-2 py-1 bg-indigo-600 text-white rounded text-xs font-semibold hover:bg-indigo-700"
+              <Zap className={`w-3.5 h-3.5 ${simulateWorkingHours ? 'text-amber-100 fill-amber-100 animate-bounce' : 'text-amber-500 dark:text-amber-400'}`} />
+              {simulateWorkingHours ? 'Simulating Working Hours (Active)' : '⚡ Test Live Countdown'}
+            </button>
+
+            {/* Priority Recalculation Selector */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-500 dark:text-slate-400 font-medium">Priority:</span>
+              <select
+                value={selectedPriority}
+                onChange={(e) => setSelectedPriority(e.target.value)}
+                className="text-xs border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
               >
-                {changingPriority ? 'Updating...' : 'Apply & Recalculate'}
-              </button>
-            )}
+                <option value="urgent">🔴 Urgent (Same-day 18:30)</option>
+                <option value="medium">🟡 Medium (3 days)</option>
+                <option value="small">🔵 Small (1 week)</option>
+              </select>
+              {selectedPriority !== ticket.priority && (
+                <button
+                  onClick={handlePriorityChange}
+                  disabled={changingPriority}
+                  className="px-2 py-1 bg-indigo-600 text-white rounded text-xs font-semibold hover:bg-indigo-700"
+                >
+                  {changingPriority ? 'Updating...' : 'Apply & Recalculate'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
+
+        {/* Informational banner explaining weekend hold vs live countdown */}
+        {simulateWorkingHours ? (
+          <div className="bg-amber-500/10 dark:bg-amber-950/40 border-b border-amber-300/40 dark:border-amber-900/60 px-6 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px] text-amber-800 dark:text-amber-300">
+            <div className="flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+              <span>
+                <strong>Simulation Active:</strong> Simulating Monday 10:00 AM IST (Business Hours). The timer is counting down second-by-second in real time.
+              </span>
+            </div>
+            <button 
+              type="button"
+              onClick={() => setSimulateWorkingHours(false)}
+              className="underline font-semibold hover:text-amber-900 dark:hover:text-amber-100"
+            >
+              Exit Simulation
+            </button>
+          </div>
+        ) : (
+          <div className="bg-slate-50 dark:bg-slate-850 border-b border-slate-200 dark:border-slate-800 px-6 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+            <div className="flex items-center gap-1.5">
+              <Moon className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span>
+                SLA countdown is currently on hold because today is <strong>Sunday (Weekend)</strong>. Timers only decay Mon–Fri 9:30 AM – 6:30 PM IST.
+              </span>
+            </div>
+            <button 
+              type="button"
+              onClick={() => setSimulateWorkingHours(true)}
+              className="text-blue-600 dark:text-blue-400 hover:underline font-medium inline-flex items-center gap-1"
+            >
+              <Zap className="w-3 h-3 text-amber-500" />
+              Click here to simulate active working hours & test countdown
+            </button>
+          </div>
+        )}
 
         {/* Main Content: 2-Column Split */}
         <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-3 divide-y lg:divide-y-0 lg:divide-x divide-slate-200 dark:divide-slate-800">
@@ -327,9 +395,19 @@ export default function TicketDetailModal({ ticketId, onClose, onTicketUpdated, 
                   <dd className="font-semibold text-slate-800 dark:text-slate-200">{ticket.agent_name || 'Unassigned'}</dd>
                 </div>
                 <div>
-                  <dt className="text-slate-400">Created</dt>
+                  <dt className="text-slate-400">Category</dt>
+                  <dd className="font-semibold text-slate-800 dark:text-slate-200">{ticket.category || 'General'}</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-400">Created By</dt>
+                  <dd className="font-semibold text-slate-800 dark:text-slate-200">
+                    {ticket.creator_name ? `${ticket.creator_name} (${ticket.creator_role || 'agent'})` : (ticket.customer_name || 'Customer')}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-slate-400">Created At</dt>
                   <dd className="text-slate-700 dark:text-slate-300">
-                    {new Date(ticket.created_at).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })}
+                    {new Date(ticket.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })}
                   </dd>
                 </div>
                 <div>

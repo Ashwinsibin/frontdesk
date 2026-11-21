@@ -65,6 +65,10 @@ CREATE TABLE IF NOT EXISTS tickets (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Ensure category and created_by_id exist if table was already created in earlier version
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS category VARCHAR(50) DEFAULT 'General';
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS created_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+
 -- 4. Ticket Messages & Notes Table
 CREATE TABLE IF NOT EXISTS ticket_messages (
     id SERIAL PRIMARY KEY,

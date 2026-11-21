@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, User, LogOut, RefreshCw, Users, Sun, Moon } from 'lucide-react';
 import { api, setAuthToken, setCurrentUser } from '../api';
+import WorkingDayIndicator from './WorkingDayIndicator';
 
 export default function Navbar({ currentUser, onUserSwitched, theme, onToggleTheme }) {
   const [demoUsers, setDemoUsers] = useState([]);
@@ -31,7 +32,7 @@ export default function Navbar({ currentUser, onUserSwitched, theme, onToggleThe
 
   return (
     <header className="bg-slate-900 text-white shadow-md sticky top-0 z-40 border-b border-slate-800 transition-colors duration-200">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-16 flex flex-wrap items-center justify-between gap-3 py-2">
         
         {/* Brand */}
         <div className="flex items-center gap-3">
@@ -47,6 +48,11 @@ export default function Navbar({ currentUser, onUserSwitched, theme, onToggleThe
             </div>
             <p className="text-[11px] text-slate-400">9-Agent Support & SLA Management System</p>
           </div>
+        </div>
+
+        {/* Working Day Indicator (Prominently visible in navigation bar) */}
+        <div className="flex items-center my-1">
+          <WorkingDayIndicator />
         </div>
 
         {/* Right Actions */}
