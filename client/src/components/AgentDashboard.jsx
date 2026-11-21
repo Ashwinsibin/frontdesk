@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Inbox, AlertCircle, Clock, CheckCircle, Search, Filter, 
   UserCheck, ShieldCheck, ChevronRight, User, RefreshCw,
-  UserPlus, Key, X
+  UserPlus, Key, X, PlusCircle
 } from 'lucide-react';
 import { api } from '../api';
 import SLACounter from './SLACounter';
@@ -17,6 +17,24 @@ export default function AgentDashboard({ currentUser }) {
   const [search, setSearch] = useState('');
   const [selectedTicketId, setSelectedTicketId] = useState(null);
   const [claimingId, setClaimingId] = useState(null);
+
+  // Agent Create Ticket State
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [existingCustomers, setExistingCustomers] = useState([]);
+  const [loadingCustomers, setLoadingCustomers] = useState(false);
+  const [createSubmitting, setCreateSubmitting] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [createForm, setCreateForm] = useState({
+    isNewCustomer: false,
+    customerId: '',
+    customerName: '',
+    customerEmail: '',
+    title: '',
+    description: '',
+    category: 'Technical Support',
+    priority: 'medium',
+    assignToSelf: true
+  });
 
   // Admin Agent Invitation States
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -37,6 +55,89 @@ export default function AgentDashboard({ currentUser }) {
       setInviteError(err.message);
     } finally {
       setInviteLoading(false);
+    }
+  };
+
+  const openCreateModal = async () => {
+    setCreateError('');
+    setShowCreateModal(true);
+    try {
+      setLoadingCustomers(true);
+      const customers = await api.getAgentCustomers();
+      setExistingCustomers(customers);
+      if (customers.length > 0 && !createForm.customerId) {
+        setCreateForm(prev => ({ ...prev, customerId: String(customers[0].id) }));
+      }
+    } catch (err) {
+      console.error('Error fetching customers:', err);
+    } finally {
+      setLoadingCustomers(false);
+    }
+  };
+
+  const handleCreateTicket = async (e) => {
+    e.preventDefault();
+    setCreateError('');
+
+    if (!createForm.title.trim()) {
+      setCreateError('Please enter a ticket title / subject.');
+      return;
+    }
+    if (!createForm.description.trim()) {
+      setCreateError('Please enter a detailed ticket description.');
+      return;
+    }
+
+    if (createForm.isNewCustomer) {
+      if (!createForm.customerName.trim()) {
+        setCreateError('Please enter the customer name.');
+        return;
+      }
+      if (!createForm.customerEmail.trim()) {
+        setCreateError('Please enter the customer email.');
+        return;
+      }
+    } else {
+      if (!createForm.customerId) {
+        setCreateError('Please select a customer.');
+        return;
+      }
+    }
+
+    try {
+      setCreateSubmitting(true);
+      const payload = {
+        title: createForm.title.trim(),
+        description: createForm.description.trim(),
+        category: createForm.category,
+        priority: createForm.priority,
+        assignToSelf: createForm.assignToSelf,
+        ...(createForm.isNewCustomer
+          ? { customerName: createForm.customerName.trim(), customerEmail: createForm.customerEmail.trim() }
+          : { customerId: parseInt(createForm.customerId, 10) })
+      };
+
+      const created = await api.createAgentTicket(payload);
+      setShowCreateModal(false);
+      setCreateForm({
+        isNewCustomer: false,
+        customerId: existingCustomers[0]?.id ? String(existingCustomers[0].id) : '',
+        customerName: '',
+        customerEmail: '',
+        title: '',
+        description: '',
+        category: 'Technical Support',
+        priority: 'medium',
+        assignToSelf: true
+      });
+      await fetchTickets();
+      if (created && created.id) {
+        setSelectedTicketId(created.id);
+      }
+    } catch (err) {
+      setCreateError(err.message || 'Failed to create ticket.');
+    } finally {
+      setCreateSubmitting(false);
     }
   };
 
@@ -123,6 +224,15 @@ export default function AgentDashboard({ currentUser }) {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Create Ticket Button (Agent & Admin) */}
+          <button
+            onClick={openCreateModal}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-xs transition"
+          >
+            <PlusCircle className="w-3.5 h-3.5" />
+            Create Ticket
+          </button>
+
           {currentUser.role === 'admin' && (
             <button
               onClick={() => {
@@ -420,6 +530,211 @@ export default function AgentDashboard({ currentUser }) {
                 </button>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Agent Create Ticket Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 max-w-xl w-full p-6 text-slate-900 dark:text-white transition-colors duration-200 my-8">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400">
+                  <PlusCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white">Create Support Ticket</h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Raise a ticket on behalf of a customer with automatic SLA initialization</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowCreateModal(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {createError && (
+              <div className="mb-4 p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-lg text-xs text-rose-700 dark:text-rose-400 font-medium">
+                {createError}
+              </div>
+            )}
+
+            <form onSubmit={handleCreateTicket} className="space-y-4">
+              {/* Customer Selection: Toggle Existing vs New */}
+              <div className="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                    Customer Account
+                  </label>
+                  <div className="inline-flex p-0.5 bg-slate-200 dark:bg-slate-700 rounded-lg text-xs font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => setCreateForm(prev => ({ ...prev, isNewCustomer: false }))}
+                      className={`px-2.5 py-1 rounded-md text-[11px] transition ${
+                        !createForm.isNewCustomer 
+                          ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs font-bold' 
+                          : 'text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      Existing Customer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCreateForm(prev => ({ ...prev, isNewCustomer: true }))}
+                      className={`px-2.5 py-1 rounded-md text-[11px] transition ${
+                        createForm.isNewCustomer 
+                          ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs font-bold' 
+                          : 'text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      + New Customer
+                    </button>
+                  </div>
+                </div>
+
+                {!createForm.isNewCustomer ? (
+                  <div>
+                    {loadingCustomers ? (
+                      <p className="text-xs text-slate-400">Loading customers...</p>
+                    ) : (
+                      <select
+                        value={createForm.customerId}
+                        onChange={(e) => setCreateForm(prev => ({ ...prev, customerId: e.target.value }))}
+                        className="w-full text-xs border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                      >
+                        {existingCustomers.map(c => (
+                          <option key={c.id} value={c.id}>
+                            {c.name} ({c.email})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <input
+                        type="text"
+                        placeholder="Customer Full Name *"
+                        value={createForm.customerName}
+                        onChange={(e) => setCreateForm(prev => ({ ...prev, customerName: e.target.value }))}
+                        className="w-full text-xs border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <input
+                        type="email"
+                        placeholder="Customer Email Address *"
+                        value={createForm.customerEmail}
+                        onChange={(e) => setCreateForm(prev => ({ ...prev, customerEmail: e.target.value }))}
+                        className="w-full text-xs border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Title / Subject */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Ticket Subject / Title *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Production login fails with error 500"
+                  value={createForm.title}
+                  onChange={(e) => setCreateForm(prev => ({ ...prev, title: e.target.value }))}
+                  className="w-full text-xs border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              {/* Category and Priority Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Category
+                  </label>
+                  <select
+                    value={createForm.category}
+                    onChange={(e) => setCreateForm(prev => ({ ...prev, category: e.target.value }))}
+                    className="w-full text-xs border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="Technical Support">Technical Support</option>
+                    <option value="Billing & Invoicing">Billing & Invoicing</option>
+                    <option value="Account Access">Account Access</option>
+                    <option value="Feature Request">Feature Request</option>
+                    <option value="General">General Inquiry</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Priority & SLA Level
+                  </label>
+                  <select
+                    value={createForm.priority}
+                    onChange={(e) => setCreateForm(prev => ({ ...prev, priority: e.target.value }))}
+                    className="w-full text-xs border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 font-medium"
+                  >
+                    <option value="urgent">🔴 Urgent (2h reply • Same-day resolve)</option>
+                    <option value="medium">🟡 Medium (4.5h reply • 3 days resolve)</option>
+                    <option value="small">🔵 Small (1 day reply • 1 week resolve)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Assignment toggle */}
+              <div className="flex items-center gap-2 p-2.5 bg-blue-50/60 dark:bg-slate-800/40 rounded-lg border border-blue-100 dark:border-slate-700 text-xs">
+                <input
+                  type="checkbox"
+                  id="assignToSelfCheck"
+                  checked={createForm.assignToSelf}
+                  onChange={(e) => setCreateForm(prev => ({ ...prev, assignToSelf: e.target.checked }))}
+                  className="rounded text-blue-600 focus:ring-blue-500 h-4 w-4"
+                />
+                <label htmlFor="assignToSelfCheck" className="text-slate-800 dark:text-slate-200 font-medium cursor-pointer">
+                  Assign this ticket to me immediately (Default)
+                </label>
+              </div>
+
+              {/* Description */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Detailed Description *
+                </label>
+                <textarea
+                  required
+                  rows={4}
+                  placeholder="Provide comprehensive issue description, steps to reproduce, or customer communication details..."
+                  value={createForm.description}
+                  onChange={(e) => setCreateForm(prev => ({ ...prev, description: e.target.value }))}
+                  className="w-full text-xs border border-slate-300 dark:border-slate-700 rounded-lg p-3 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="px-4 py-2 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={createSubmitting}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white rounded-lg text-xs font-bold shadow-xs transition"
+                >
+                  <PlusCircle className="w-3.5 h-3.5" />
+                  {createSubmitting ? 'Creating Ticket...' : 'Create Ticket & Start SLA'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

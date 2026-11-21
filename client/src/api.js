@@ -78,6 +78,8 @@ export const api = {
     return request(`/agent/tickets${qs ? `?${qs}` : ''}`);
   },
   getAgentTicketDetail: (id) => request(`/agent/tickets/${id}`),
+  getAgentCustomers: () => request('/agent/customers'),
+  createAgentTicket: (ticketData) => request('/agent/tickets', { method: 'POST', body: JSON.stringify(ticketData) }),
   claimTicket: (id) => request(`/agent/tickets/${id}/claim`, { method: 'POST' }),
   postAgentMessage: (id, { messageType, content }) => request(`/agent/tickets/${id}/messages`, { method: 'POST', body: JSON.stringify({ messageType, content }) }),
   updatePriority: (id, priority) => request(`/agent/tickets/${id}/priority`, { method: 'PATCH', body: JSON.stringify({ priority }) }),

@@ -1,10 +1,13 @@
 import { Router } from 'express';
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { pool, query } from '../config/db.js';
 import { authenticate, requireRole } from '../middleware/authMiddleware.js';
 import { jitSweeperMiddleware } from '../middleware/jitSweeperMiddleware.js';
 import { logAuditEvent, getTicketAuditTrail } from '../services/auditService.js';
 import { getHolidaySet } from '../services/sweeperService.js';
 import { 
+  calculateInitialSLADeadlines,
   recalculateSLAOnPriorityChange, 
   resumePausedSLA, 
   addWorkingMinutes, 
@@ -32,10 +35,12 @@ router.get('/tickets', async (req, res) => {
     let sql = `
       SELECT t.*, 
              c.name as customer_name, c.email as customer_email,
-             a.name as agent_name, a.email as agent_email
+             a.name as agent_name, a.email as agent_email,
+             creator.name as creator_name, creator.role as creator_role
       FROM tickets t
       JOIN users c ON t.customer_id = c.id
       LEFT JOIN users a ON t.assigned_agent_id = a.id
+      LEFT JOIN users creator ON t.created_by_id = creator.id
       WHERE 1=1
     `;
     const params = [];
@@ -104,10 +109,12 @@ router.get('/tickets/:id', async (req, res) => {
     const ticketRes = await query(`
       SELECT t.*, 
              c.name as customer_name, c.email as customer_email,
-             a.name as agent_name, a.email as agent_email
+             a.name as agent_name, a.email as agent_email,
+             creator.name as creator_name, creator.role as creator_role
       FROM tickets t
       JOIN users c ON t.customer_id = c.id
       LEFT JOIN users a ON t.assigned_agent_id = a.id
+      LEFT JOIN users creator ON t.created_by_id = creator.id
       WHERE t.id = $1
     `, [ticketId]);
 
@@ -141,6 +148,196 @@ router.get('/tickets/:id', async (req, res) => {
   } catch (err) {
     console.error('Error loading ticket details:', err);
     res.status(500).json({ error: 'Failed to retrieve ticket details.' });
+  }
+});
+
+/**
+ * GET /api/agent/customers
+ * List existing customers for agent ticket creation dropdown
+ */
+router.get('/customers', async (req, res) => {
+  try {
+    const result = await query(`
+      SELECT id, name, email 
+      FROM users 
+      WHERE role = 'customer' AND (status = 'active' OR status IS NULL)
+      ORDER BY name ASC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching customers:', err);
+    res.status(500).json({ error: 'Failed to retrieve customer list.' });
+  }
+});
+
+/**
+ * POST /api/agent/tickets
+ * Agent creates a new support ticket on behalf of a customer.
+ * - Automatically initializes SLA deadlines based on priority and business calendar.
+ * - By default assigns to logged-in agent (status: 'open').
+ * - Validates all required fields.
+ * - Appends to immutable audit trail.
+ */
+router.post('/tickets', async (req, res) => {
+  if (req.user.status === 'inactive' || req.user.is_active === false) {
+    return res.status(403).json({ error: 'Deactivated agents cannot create tickets.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { 
+      title, 
+      description, 
+      priority = 'medium', 
+      category = 'General',
+      customerId,
+      customerName,
+      customerEmail,
+      assignToSelf = true
+    } = req.body;
+
+    if (!title || !title.trim()) {
+      return res.status(400).json({ error: 'Ticket title/subject is required.' });
+    }
+    if (!description || !description.trim()) {
+      return res.status(400).json({ error: 'Ticket description is required.' });
+    }
+    if (!['urgent', 'medium', 'small'].includes(priority)) {
+      return res.status(400).json({ error: "Priority must be 'urgent', 'medium', or 'small'." });
+    }
+
+    // Resolve Customer
+    let customer = null;
+    if (customerId) {
+      const custRes = await client.query(
+        "SELECT id, name, email, role FROM users WHERE id = $1 AND role = 'customer'",
+        [customerId]
+      );
+      if (custRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Selected customer not found or is not a customer.' });
+      }
+      customer = custRes.rows[0];
+    } else if (customerEmail && customerEmail.trim()) {
+      const cleanEmail = customerEmail.trim().toLowerCase();
+      const existingRes = await client.query(
+        "SELECT id, name, email, role FROM users WHERE LOWER(email) = LOWER($1)",
+        [cleanEmail]
+      );
+      if (existingRes.rows.length > 0) {
+        if (existingRes.rows[0].role !== 'customer') {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Cannot create ticket on behalf of an agent or admin account.' });
+        }
+        customer = existingRes.rows[0];
+      } else {
+        // Auto-provision new customer account
+        if (!customerName || !customerName.trim()) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Customer name is required for new customers.' });
+        }
+        const tempPassword = crypto.randomBytes(16).toString('hex');
+        const hash = await bcrypt.hash(tempPassword, 10);
+        const newCustRes = await client.query(`
+          INSERT INTO users (name, email, password_hash, role, status, is_active)
+          VALUES ($1, $2, $3, 'customer', 'active', TRUE)
+          RETURNING id, name, email, role
+        `, [customerName.trim(), cleanEmail, hash]);
+        customer = newCustRes.rows[0];
+      }
+    } else {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Please select an existing customer or provide customer name and email.' });
+    }
+
+    // Generate ticket number (TCK-XXXX)
+    const countRes = await client.query("SELECT nextval('tickets_id_seq') as next_id");
+    const nextId = countRes.rows[0].next_id;
+    const ticketNumber = `TCK-${String(nextId).padStart(4, '0')}`;
+
+    const holidaySet = await getHolidaySet(client);
+    const createdAt = new Date();
+
+    // Calculate initial SLA deadlines using Asia/Kolkata business calendar
+    const { firstResponseDueAt, resolutionDueAt } = calculateInitialSLADeadlines(
+      priority,
+      createdAt,
+      holidaySet
+    );
+
+    const assignedAgentId = assignToSelf !== false ? req.user.id : null;
+    const initialStatus = assignedAgentId ? 'open' : 'new';
+
+    const insertRes = await client.query(`
+      INSERT INTO tickets (
+        id, ticket_number, title, description, category, customer_id, 
+        assigned_agent_id, status, priority, first_response_due_at, resolution_due_at, 
+        created_by_id, last_customer_reply_at, created_at, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $13)
+      RETURNING *
+    `, [
+      nextId,
+      ticketNumber,
+      title.trim(),
+      description.trim(),
+      category ? category.trim() : 'General',
+      customer.id,
+      assignedAgentId,
+      initialStatus,
+      priority,
+      firstResponseDueAt,
+      resolutionDueAt,
+      req.user.id,
+      createdAt
+    ]);
+
+    const newTicket = insertRes.rows[0];
+
+    // Append to immutable audit log
+    await logAuditEvent({
+      client,
+      ticketId: newTicket.id,
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      action: 'ticket_created_by_agent',
+      newValue: {
+        ticket_number: ticketNumber,
+        title: newTicket.title,
+        priority: newTicket.priority,
+        category: newTicket.category,
+        customer_id: customer.id,
+        customer_name: customer.name,
+        customer_email: customer.email,
+        assigned_agent_id: assignedAgentId,
+        created_by_id: req.user.id,
+        first_response_due_at: firstResponseDueAt,
+        resolution_due_at: resolutionDueAt
+      },
+      details: `Ticket created by support agent ${req.user.name} on behalf of customer ${customer.name} (${customer.email})`
+    });
+
+    await client.query('COMMIT');
+
+    const slaInfo = getTicketSLAInfo(newTicket, createdAt, holidaySet);
+    res.status(201).json({
+      ...newTicket,
+      customer_name: customer.name,
+      customer_email: customer.email,
+      agent_name: assignedAgentId ? req.user.name : null,
+      agent_email: assignedAgentId ? req.user.email : null,
+      creator_name: req.user.name,
+      creator_role: req.user.role,
+      sla_info: slaInfo,
+      is_overdue: slaInfo.is_overdue
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error creating ticket by agent:', err);
+    res.status(500).json({ error: 'Failed to create ticket: ' + err.message });
+  } finally {
+    client.release();
   }
 });
 
