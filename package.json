@@ -1,0 +1,19 @@
+{
+  "name": "frontdesk",
+  "version": "1.0.0",
+  "description": "FRONTDESK Full-Stack Customer Support Ticket Management System",
+  "scripts": {
+    "install:server": "cd server && npm install",
+    "install:client": "cd client && npm install",
+    "install:all": "npm run install:server && npm run install:client",
+    "test": "cd server && npm test",
+    "build": "cd client && npm run build",
+    "start": "cd server && node src/server.js",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev"
+  },
+  "dependencies": {
+    "@neon/config": "^1.14.6",
+    "@neon/env": "^2.1.9"
+  }
+}

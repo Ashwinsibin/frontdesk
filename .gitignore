@@ -1,0 +1,16 @@
+# Neon configuration and credentials
+.neon
+.env
+.env.local
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Logs
+*.log
+npm-debug.log*
