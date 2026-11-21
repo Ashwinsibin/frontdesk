@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import authRoutes from './routes/authRoutes.js';
 import agentRoutes from './routes/agentRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
+import adminRoutes from './routes/adminRoutes.js';
 import holidayRoutes from './routes/holidayRoutes.js';
 import { testConnection } from './config/db.js';
 import { runMigrations } from './db/migrate.js';
@@ -48,6 +49,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/agent', agentRoutes);
 app.use('/api/customer', customerRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/holidays', holidayRoutes);
 
 // Serve Client Static Build

@@ -5,7 +5,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'frontdesk_super_secret_jwt_key_202
 
 export function signToken(user) {
   return jwt.sign(
-    { id: user.id, name: user.name, email: user.email, role: user.role },
+    { id: user.id, name: user.name, email: user.email, role: user.role, status: user.status || 'active' },
     JWT_SECRET,
     { expiresIn: '7d' }
   );
@@ -24,13 +24,18 @@ export async function authenticate(req, res, next) {
     const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, JWT_SECRET);
 
-    // Verify user still exists in DB
-    const userRes = await query('SELECT id, name, email, role FROM users WHERE id = $1', [decoded.id]);
+    // Verify user still exists in DB and account is active
+    const userRes = await query('SELECT id, name, email, role, status, is_active FROM users WHERE id = $1', [decoded.id]);
     if (userRes.rows.length === 0) {
       return res.status(401).json({ error: 'User account no longer exists.' });
     }
 
-    req.user = userRes.rows[0];
+    const user = userRes.rows[0];
+    if (user.status === 'inactive' || user.is_active === false) {
+      return res.status(403).json({ error: 'Account has been deactivated. Please contact an administrator.' });
+    }
+
+    req.user = user;
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Invalid or expired authentication token.' });

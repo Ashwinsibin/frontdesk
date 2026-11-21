@@ -221,8 +221,11 @@ export function calculateInitialSLADeadlines(priority, createdAt, holidaySet = n
   // 2. Resolution SLA
   let resolutionDueAt;
   if (priority === 'urgent') {
-    // URGENT POLICY: Same working day by 18:30:00 IST of effective start day
-    resolutionDueAt = makeISTDate(effectiveDateStr, WORK_END_MIN);
+    // URGENT POLICY: Same working day by 18:30:00 IST of the day when first response is due.
+    // If ticket is created with enough time today, it is today 18:30 IST.
+    // If first response rolls over to the next working day, resolution is 18:30 IST of that working day.
+    const responseDayStr = formatISTDate(firstResponseDueAt);
+    resolutionDueAt = makeISTDate(responseDayStr, WORK_END_MIN);
   } else {
     const resolveMinutes = SLA_MINUTES[priority].resolveMinutes;
     resolutionDueAt = addWorkingMinutes(effectiveStart, resolveMinutes, holidaySet);
@@ -274,9 +277,14 @@ export function recalculateSLAOnPriorityChange(ticket, newPriority, now = new Da
   let resolutionBreached = ticket.resolution_breached;
 
   if (newPriority === 'urgent') {
-    const effectiveDay = snapToNextWorkingWindow(referenceTime, holidaySet);
-    const dayStr = formatISTDate(effectiveDay);
-    resolutionDueAt = makeISTDate(dayStr, WORK_END_MIN);
+    let targetDayStr;
+    if (!ticket.first_responded_at && firstResponseDueAt) {
+      targetDayStr = formatISTDate(firstResponseDueAt);
+    } else {
+      const effectiveDay = snapToNextWorkingWindow(referenceTime, holidaySet);
+      targetDayStr = formatISTDate(effectiveDay);
+    }
+    resolutionDueAt = makeISTDate(targetDayStr, WORK_END_MIN);
     
     if (!isCurrentlyPaused && resolutionDueAt <= now) {
       resolutionBreached = true;
@@ -360,4 +368,106 @@ export function checkReopenEligibility(ticket, now = new Date()) {
   }
 
   return { canReopen: true, deadline };
+}
+
+/**
+ * Computes live SLA countdown details, remaining working minutes, and overdue status
+ * for a ticket, strictly adhering to business hours, pause states, and holidays.
+ * 
+ * @param {Object} ticket
+ * @param {Date} now
+ * @param {Set<string>} holidaySet
+ * @returns {Object}
+ */
+export function getTicketSLAInfo(ticket, now = new Date(), holidaySet = new Set()) {
+  const isPendingCustomer = ticket.status === 'pending_customer';
+  const isResolvedOrClosed = ticket.status === 'resolved' || ticket.status === 'closed';
+
+  // Reference time: if paused, frozen at sla_paused_at
+  const referenceTime = isPendingCustomer && ticket.sla_paused_at
+    ? new Date(ticket.sla_paused_at)
+    : new Date(now);
+
+  // --- 1. Reply SLA ---
+  const firstResponseDue = ticket.first_response_due_at ? new Date(ticket.first_response_due_at) : null;
+  const isFirstResponded = Boolean(ticket.first_responded_at);
+  let replyRemainingWorkingMinutes = 0;
+  let isReplyOverdue = false;
+
+  if (firstResponseDue) {
+    if (isFirstResponded) {
+      isReplyOverdue = Boolean(ticket.first_response_breached);
+      replyRemainingWorkingMinutes = 0;
+    } else if (isPendingCustomer) {
+      if (referenceTime < firstResponseDue) {
+        replyRemainingWorkingMinutes = calculateWorkingMinutes(referenceTime, firstResponseDue, holidaySet);
+        isReplyOverdue = false;
+      } else {
+        isReplyOverdue = true;
+        replyRemainingWorkingMinutes = 0;
+      }
+    } else {
+      if (now <= firstResponseDue) {
+        replyRemainingWorkingMinutes = calculateWorkingMinutes(now, firstResponseDue, holidaySet);
+        isReplyOverdue = false;
+      } else {
+        isReplyOverdue = true;
+        replyRemainingWorkingMinutes = -calculateWorkingMinutes(firstResponseDue, now, holidaySet);
+      }
+    }
+  }
+
+  // --- 2. Resolution SLA ---
+  const resolutionDue = ticket.resolution_due_at ? new Date(ticket.resolution_due_at) : null;
+  const isResolved = isResolvedOrClosed && Boolean(ticket.resolved_at || ticket.closed_at);
+  let resolveRemainingWorkingMinutes = 0;
+  let isResolveOverdue = false;
+
+  if (resolutionDue) {
+    if (isResolved) {
+      isResolveOverdue = Boolean(ticket.resolution_breached);
+      resolveRemainingWorkingMinutes = 0;
+    } else if (isPendingCustomer) {
+      if (referenceTime < resolutionDue) {
+        resolveRemainingWorkingMinutes = calculateWorkingMinutes(referenceTime, resolutionDue, holidaySet);
+        isResolveOverdue = false;
+      } else {
+        isResolveOverdue = true;
+        resolveRemainingWorkingMinutes = 0;
+      }
+    } else {
+      if (now <= resolutionDue) {
+        resolveRemainingWorkingMinutes = calculateWorkingMinutes(now, resolutionDue, holidaySet);
+        isResolveOverdue = false;
+      } else {
+        isResolveOverdue = true;
+        resolveRemainingWorkingMinutes = -calculateWorkingMinutes(resolutionDue, now, holidaySet);
+      }
+    }
+  }
+
+  // Overall ticket overdue flag:
+  // Paused tickets and resolved/closed tickets are NEVER overdue
+  const isOverdue = !isPendingCustomer && !isResolvedOrClosed && (isReplyOverdue || isResolveOverdue);
+
+  return {
+    reply: {
+      due_at: ticket.first_response_due_at,
+      completed_at: ticket.first_responded_at,
+      is_completed: isFirstResponded,
+      is_paused: isPendingCustomer,
+      is_breached: Boolean(ticket.first_response_breached) || (!isFirstResponded && isReplyOverdue),
+      remaining_working_minutes: replyRemainingWorkingMinutes
+    },
+    resolution: {
+      due_at: ticket.resolution_due_at,
+      completed_at: ticket.resolved_at || ticket.closed_at,
+      is_completed: isResolved,
+      is_paused: isPendingCustomer,
+      is_breached: Boolean(ticket.resolution_breached) || (!isResolved && isResolveOverdue),
+      remaining_working_minutes: resolveRemainingWorkingMinutes
+    },
+    is_paused: isPendingCustomer,
+    is_overdue: isOverdue
+  };
 }

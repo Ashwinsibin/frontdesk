@@ -10,8 +10,14 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(150) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(20) NOT NULL CHECK (role IN ('customer', 'agent', 'admin')),
+    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Ensure columns exist if table was already created in earlier version
+ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 
 -- 2. Holidays Table (Excludes festival days from SLA calculations)
 CREATE TABLE IF NOT EXISTS holidays (
@@ -89,6 +95,42 @@ CREATE INDEX IF NOT EXISTS idx_tickets_customer ON tickets(customer_id);
 CREATE INDEX IF NOT EXISTS idx_messages_ticket ON ticket_messages(ticket_id);
 CREATE INDEX IF NOT EXISTS idx_audit_ticket ON ticket_audit_logs(ticket_id);
 
+-- 6. Agent Invitations Table (For administrator invitation & approval)
+CREATE TABLE IF NOT EXISTS agent_invitations (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(150) NOT NULL,
+    token VARCHAR(100) UNIQUE NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Ensure revoked_at exists if table was previously created
+ALTER TABLE agent_invitations ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_invitations_token ON agent_invitations(token);
+CREATE INDEX IF NOT EXISTS idx_invitations_email ON agent_invitations(email);
+
+-- 7. Admin Activity Logs (Append-Only Audit of Administrator Operations)
+CREATE TABLE IF NOT EXISTS admin_activity_logs (
+    id SERIAL PRIMARY KEY,
+    admin_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    admin_name VARCHAR(100) NOT NULL,
+    admin_email VARCHAR(150) NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    target_type VARCHAR(50) NOT NULL,
+    target_id VARCHAR(100),
+    details TEXT,
+    metadata JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_logs_action ON admin_activity_logs(action);
+CREATE INDEX IF NOT EXISTS idx_admin_logs_target ON admin_activity_logs(target_type);
+CREATE INDEX IF NOT EXISTS idx_admin_logs_created ON admin_activity_logs(created_at);
+
 -- Layer 1: Trigger-Based Immutability Guard on Audit Logs
 CREATE OR REPLACE FUNCTION prevent_audit_log_mutation()
 RETURNS TRIGGER AS $$
@@ -102,3 +144,17 @@ DROP TRIGGER IF EXISTS trg_protect_audit_logs ON ticket_audit_logs;
 CREATE TRIGGER trg_protect_audit_logs
 BEFORE UPDATE OR DELETE ON ticket_audit_logs
 FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_mutation();
+
+-- Layer 2: Trigger-Based Immutability Guard on Admin Activity Logs
+CREATE OR REPLACE FUNCTION prevent_admin_log_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'Security Violation: admin_activity_logs is append-only. UPDATE and DELETE operations are prohibited.'
+        USING ERRCODE = '28000';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_protect_admin_activity_logs ON admin_activity_logs;
+CREATE TRIGGER trg_protect_admin_activity_logs
+BEFORE UPDATE OR DELETE ON admin_activity_logs
+FOR EACH ROW EXECUTE FUNCTION prevent_admin_log_mutation();

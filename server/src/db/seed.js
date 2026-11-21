@@ -8,7 +8,15 @@ export async function seedDatabase() {
   try {
     await client.query('BEGIN');
 
-    // 1. Seed 9 Support Agents
+    // 1. Seed Administrator Account
+    const adminPasswordHash = await bcrypt.hash('admin123', 10);
+    await client.query(`
+      INSERT INTO users (name, email, password_hash, role)
+      VALUES ('System Administrator', 'admin@frontdesk.com', $1, 'admin')
+      ON CONFLICT (email) DO NOTHING
+    `, [adminPasswordHash]);
+
+    // 2. Seed 9 Support Agents
     const agentPasswordHash = await bcrypt.hash('agent123', 10);
     const customerPasswordHash = await bcrypt.hash('customer123', 10);
 

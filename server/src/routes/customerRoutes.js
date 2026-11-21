@@ -7,7 +7,8 @@ import { getHolidaySet } from '../services/sweeperService.js';
 import { 
   calculateInitialSLADeadlines, 
   resumePausedSLA, 
-  checkReopenEligibility 
+  checkReopenEligibility,
+  getTicketSLAInfo
 } from '../services/slaEngine.js';
 
 const router = Router();
@@ -115,7 +116,18 @@ router.get('/tickets', async (req, res) => {
       ORDER BY created_at DESC
     `, [customerId]);
 
-    res.json(result.rows);
+    const holidaySet = await getHolidaySet();
+    const now = new Date();
+    const enriched = result.rows.map(row => {
+      const slaInfo = getTicketSLAInfo(row, now, holidaySet);
+      return {
+        ...row,
+        sla_info: slaInfo,
+        is_overdue: slaInfo.is_overdue
+      };
+    });
+
+    res.json(enriched);
   } catch (err) {
     console.error('Error listing customer tickets:', err);
     res.status(500).json({ error: 'Failed to retrieve tickets.' });
@@ -146,6 +158,10 @@ router.get('/tickets/:id', async (req, res) => {
     }
 
     const ticket = ticketRes.rows[0];
+    const holidaySet = await getHolidaySet();
+    const slaInfo = getTicketSLAInfo(ticket, new Date(), holidaySet);
+    ticket.sla_info = slaInfo;
+    ticket.is_overdue = slaInfo.is_overdue;
 
     // CRITICAL: Fetch ONLY messages with message_type = 'public_reply'
     // Internal notes are strictly excluded at both the query and application layer
