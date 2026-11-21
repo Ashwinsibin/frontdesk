@@ -21,7 +21,8 @@ const __dirname = path.dirname(__filename);
 const clientDistPath = path.join(__dirname, '../../client/dist');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 5000;
+const HOST = '0.0.0.0';
 
 // Middleware
 app.use(cors());
@@ -97,8 +98,8 @@ export async function startServer() {
     }
   }, 5 * 60 * 1000);
 
-  const server = app.listen(PORT, () => {
-    console.log(`✅ FRONTDESK API Server running on port ${PORT}`);
+  const server = app.listen(PORT, HOST, () => {
+    console.log(`✅ FRONTDESK API Server running on ${HOST}:${PORT}`);
     console.log(`🌐 Base URL: http://localhost:${PORT}`);
   });
 
