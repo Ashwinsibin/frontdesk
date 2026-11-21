@@ -53,7 +53,14 @@ async function request(endpoint, options = {}) {
 export const api = {
   // Auth
   login: (email, password) => request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
-  register: (name, email, password) => request('/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password }) }),
+  register: ({ name, email, password, confirmPassword }) => 
+    request('/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password, confirmPassword }) }),
+  registerAgent: ({ name, email, password, confirmPassword, inviteToken }) =>
+    request('/auth/register-agent', { method: 'POST', body: JSON.stringify({ name, email, password, confirmPassword, inviteToken }) }),
+  inviteAgent: (email) =>
+    request('/auth/invite-agent', { method: 'POST', body: JSON.stringify({ email }) }),
+  createAdmin: ({ name, email, password }) =>
+    request('/auth/create-admin', { method: 'POST', body: JSON.stringify({ name, email, password }) }),
   getMe: () => request('/auth/me'),
   getDemoUsers: () => request('/auth/demo-users'),
 
@@ -76,5 +83,47 @@ export const api = {
   reopenTicket: (id) => request(`/customer/tickets/${id}/reopen`, { method: 'POST' }),
 
   // Holidays
-  getHolidays: () => request('/holidays')
+  getHolidays: () => request('/holidays'),
+
+  // Admin Management Endpoints
+  getAdminOverview: () => request('/admin/overview'),
+  getAdminAgents: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/admin/agents${qs ? `?${qs}` : ''}`);
+  },
+  updateAgentStatus: (id, { status, reassignTicketsTo }) =>
+    request(`/admin/agents/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status, reassignTicketsTo })
+    }),
+  deleteAgent: (id) => request(`/admin/agents/${id}`, { method: 'DELETE' }),
+  getAdminTickets: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/admin/tickets${qs ? `?${qs}` : ''}`);
+  },
+  adminAssignTicket: (id, agentId) =>
+    request(`/admin/tickets/${id}/assign`, {
+      method: 'PATCH',
+      body: JSON.stringify({ agentId })
+    }),
+  adminUpdatePriority: (id, priority) =>
+    request(`/admin/tickets/${id}/priority`, {
+      method: 'PATCH',
+      body: JSON.stringify({ priority })
+    }),
+  getAdminPerformance: () => request('/admin/performance'),
+  getAdminInvitations: () => request('/admin/invitations'),
+  createAdminInvitation: (email) =>
+    request('/admin/invitations', {
+      method: 'POST',
+      body: JSON.stringify({ email })
+    }),
+  revokeInvitation: (id) =>
+    request(`/admin/invitations/${id}/revoke`, {
+      method: 'POST'
+    }),
+  getAdminActivityLogs: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/admin/activity-logs${qs ? `?${qs}` : ''}`);
+  }
 };

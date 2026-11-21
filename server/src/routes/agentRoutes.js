@@ -11,7 +11,8 @@ import {
   toIST,
   formatISTDate,
   makeISTDate,
-  WORK_END_MIN
+  WORK_END_MIN,
+  getTicketSLAInfo
 } from '../services/slaEngine.js';
 
 const router = Router();
@@ -75,7 +76,17 @@ router.get('/tickets', async (req, res) => {
     `;
 
     const result = await query(sql, params);
-    res.json(result.rows);
+    const holidaySet = await getHolidaySet();
+    const now = new Date();
+    const enriched = result.rows.map(row => {
+      const slaInfo = getTicketSLAInfo(row, now, holidaySet);
+      return {
+        ...row,
+        sla_info: slaInfo,
+        is_overdue: slaInfo.is_overdue
+      };
+    });
+    res.json(enriched);
   } catch (err) {
     console.error('Error fetching agent tickets:', err);
     res.status(500).json({ error: 'Failed to retrieve ticket queue.' });
@@ -105,6 +116,10 @@ router.get('/tickets/:id', async (req, res) => {
     }
 
     const ticket = ticketRes.rows[0];
+    const holidaySet = await getHolidaySet();
+    const slaInfo = getTicketSLAInfo(ticket, new Date(), holidaySet);
+    ticket.sla_info = slaInfo;
+    ticket.is_overdue = slaInfo.is_overdue;
 
     // Fetch messages (Agent sees both public_reply and internal_note)
     const messagesRes = await query(`
@@ -134,6 +149,11 @@ router.get('/tickets/:id', async (req, res) => {
  * ATOMIC SINGLE-AGENT CLAIM with Concurrency Protection
  */
 router.post('/tickets/:id/claim', async (req, res) => {
+  // Prevent deactivated agents from claiming tickets
+  if (req.user.status === 'inactive' || req.user.is_active === false) {
+    return res.status(403).json({ error: 'Deactivated agents cannot claim tickets.' });
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
